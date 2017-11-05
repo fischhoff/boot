@@ -1,0 +1,249 @@
+---
+title: "Bootstrap power code for BACI experiments"
+output:
+  html_document: default
+  html_notebook: default
+---
+#Author: Ilya R. Fischhoff (fischhoff@gmail.com)
+#1) Use bootstrapping to perform retrospective, multivariate power analysis for specified range in reductions in abundance due to treatment in before-after-control-impact study. Determine level of power an experiment had to detect specific level of reduction in abundance.   
+
+#2) Use bootstrapping to perform prospective, multivariate power analysis for specified range of multiples of sample size, given pilot data (or simulated data). 
+
+#1) bootstrap retrospective power analysis: bulk sample, post-spray sample 1 
+```{r}
+#Author: Ilya R. Fischhoff (fischhoff@gmail.com)
+#Perform retrospective, bootstrap, multivariate power analysis for
+#range of potential reductions in abundance due to treatment, 
+#in before-after-control-impact studies. 
+
+#install package mvabund if not already installed
+list.of.packages <- c("mvabund")
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages)
+print(new.packages)
+library("mvabund")
+#time how long it takes to do randomization
+ptm <- proc.time()
+
+#make comparison pre-spray vs. sample_time == 2 (1 week post-spray)
+sample_time_of_interest = 2
+
+#read in order names
+#read in pooled data
+obs = read.csv(file = "Met52_NTE_bulk_samples.csv")
+#indices of columns with the abundance of each order (data need to be in wide format)
+z.obs = c(1:20)
+orders = names(obs)[z.obs]
+
+#initialize with NAs vectors that will store the outputs of randomization runs 
+#sample_X_diff is percent reduction in abundance in a given run of the randomization
+sample_X_diff = NA
+PHL.AIC = NA #PHL.AIC will be AIC value of each run of period + habitat +location model
+PHLT.AIC = NA#PHLT.AIC will be AIC value of each run of period+habitat+location+treatment model
+df = data.frame(sample_X_diff, PHL.AIC, PHLT.AIC)
+reps = 10#start with small number of reps like 10 to make sure this works 
+#range of percent reductions to examine in randomization
+sample_X_range = seq(from = 0.1, to = 0.9, by = 0.05)#note could be modified to examine increase in abundance
+for (a in 1:reps){
+    #print rand run to know how far along it is
+    print("a") 
+   print(a)
+    #for each possible reduction in abundance
+   for (b in 1:length(sample_X_range)){
+    obs = NULL
+    PHL.AIC = NA
+    PHLT.AIC = NA
+    obs = read.csv("Met52_NTE_bulk_samples.csv")
+    #subset for sample_times of interest (pre- and 1-week-post-spray)
+    obs = subset(obs, sample_time == 1 | sample_time == sample_time_of_interest)
+    #sample with replacement from the abundances of all samples    
+    obs.rand = obs[sample(nrow(obs), replace = TRUE),z.obs]
+    #assign the observed period and treatment
+    obs.rand$period.treatment = obs$period.treatment
+    obs.rand$period_num = obs$period_num
+    obs.rand$habitat = obs$habitat
+    obs.rand$location_num = obs$location_num
+    obs.rand$treatment_num = obs$treatment_num
+    rm(obs)
+    inds.m52.after = which(obs.rand$period.treatment == 4)
+    #change values so that  post-Met52 = post-Met52*sample_X_range[b]
+    obs.rand[inds.m52.after, z.obs] = round(sample_X_range[b] * 
+      obs.rand[inds.m52.after, z.obs])
+    #now do GLMs with mvabund
+    abundance = as.mvabund(obs.rand[,z.obs])
+    period = factor(obs.rand$period_num)#model as factor
+    habitat = factor(obs.rand$habitat)
+    location = factor(obs.rand$location_num)
+    treatment = factor(obs.rand$treatment_num)
+    #PHL formula
+    formula = abundance ~  period + habitat + location  
+    #fit model with manyglm
+    fit.rand.PHL = manyglm(formula)
+    PHL.AIC= fit.rand.PHL$AICsum
+  #PHLT
+    formula = abundance ~  period + habitat + location + treatment 
+    fit.rand.PHLT = manyglm(formula)
+    PHLT.AIC = fit.rand.PHLT$AICsum
+    sample_X_diff = sample_X_range[b]
+    df.tmp = data.frame(sample_X_diff, PHL.AIC, PHLT.AIC)
+    df = rbind(df, df.tmp)
+  }
+}
+#remove first row that was a placeholder so that rbind would work
+df = df[c(2:dim(df)[1]),]
+#determine for each run whether AIC for PHLT was less than for PHL
+df$treat_effect = df$PHLT.AIC<df$PHL.AIC
+
+frac_sig = rep(NA, length(sample_X_range))
+#check that all poss. reductions had the same number of randomization runs
+rep_chk= rep(NA, length(sample_X_range))
+sig = rep(NA, length(sample_X_range))
+for (a in 1:length(sample_X_range )){
+  #number of runs for that sample_X_diff
+  rep_chk[a] = length(which(df$sample_X_diff==sample_X_range[a]))
+  sig[a] = length(which(df$sample_X_diff==sample_X_range[a] & 
+                          df$treat_effect==TRUE))
+  frac_sig[a] =  sig[a]/rep_chk[a]
+}
+df.sum = data.frame(sample_X_range, sig, rep_chk, frac_sig )
+
+print(df.sum)
+write.csv(df.sum, file = "power_detect_retro_boot1.csv")
+print(proc.time() - ptm)
+
+```
+
+#2) #bootstrap prospective power analysis: bulk samples, post-spray sample 1 (use for determining sample size needed to detect a given effect of interest)
+```{r}
+#Author: Ilya R. Fischhoff (fischhoff@gmail.com)
+#Perform Prospective, bootstrap, multivariate power analysis for
+#specified reductions in abundance due to treatment, 
+#in before-after-control-impact study. 
+
+#sequence of factors by which sample size will be multiplied
+sample_N_range = seq(1, 20,by = 1)
+
+#install package mvabund if not already installed
+list.of.packages <- c("mvabund")
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages)
+print(new.packages)
+library("mvabund")#load mvabund
+#time how long it takes to do randomization
+ptm <- proc.time()
+
+#make comparison pre-spray vs. sample_time == 1 (1 week post-spray)
+sample_time_of_interest = 2
+
+#read in pooled data (can be accessed via figshare: https://figshare.com/s/7d06cefd230a2a5bde52)
+obs = read.csv("Met52_NTE_bulk_samples.csv")
+
+#these are the order names:
+#read in order names (can be accessed via figshare: https://figshare.com/s/7d06cefd230a2a5bde52)
+O = read.csv(file ="bulk.orders.csv",row.names=NULL) 
+
+oi = intersect(names(obs), O$Latin.name)
+#z.obs = inds for orders
+z.obs= match(oi, names(obs))
+
+#indices of columns with the abundance of each order
+orders = names(obs)[z.obs]
+
+#initialize with NAs vectors that will store the outputs of randomization runs 
+#sample_X_diff is percent reduction in abundance in a given run of the randomization
+sample_X_diff = NA
+sample_N_temp = NA
+#sample_N sample size: number of locations
+PHL.AIC = NA #PHL.AIC will be AIC value of each run of period + habitat +location model
+PHLT.AIC = NA#PHLT.AIC will be AIC value of each run of period+habitat+location+treatment model
+#make placeholder data.frame -- this will hold output of randomization runs
+df = data.frame(sample_X_diff, sample_N_temp, PHL.AIC, PHLT.AIC)
+reps = 10#start with something small like 10 reps to see if it works
+#range of percent reductions to examine in randomization
+sample_X_range = seq(from = 0.5, to = 0.75, by = 0.25)#just examine 0.25% reduction and 50% reduction
+for (a in 1:reps){
+    #print rand run to know how far along it is
+  print("a") 
+   print(a)
+    #for each possible reduction in abundance
+   for (b in 1:length(sample_X_range)){
+      #for each possible increase in sample size
+         for (c in 1:length(sample_N_range)){
+        obs = NULL
+        PHL.AIC = NA
+        PHLT.AIC = NA
+        obs = read.csv("Met52_NTE_bulk_samples.csv")
+        #subset for sample_times of interest (pre- and 1-week-post-spray)
+        obs = subset(obs, sample_time == 1 | sample_time == sample_time_of_interest)
+        n = sample_N_range[c]
+        obs = do.call("rbind", replicate(n, obs, simplify = FALSE))
+        rm(n)
+        #sample with replacement from the abundances of all samples, with number of samples =         sample_N_range[c]*nrow(obs)    
+        obs.rand = obs[sample(nrow(obs), replace = TRUE),z.obs]
+        #assign the observed period and treatment
+        obs.rand$period.treatment = obs$period.treatment
+        obs.rand$period_num = obs$period_num
+        obs.rand$habitat = obs$habitat
+        obs.rand$location_num = obs$location_num
+        obs.rand$treatment_num = obs$treatment_num
+        rm(obs)
+        inds.m52.after = which(obs.rand$period.treatment == 4)
+        #change values so that  post-Met52 = post-Met52*sample_X_range[b]
+        obs.rand[inds.m52.after, z.obs] = round(sample_X_range[b] * 
+          obs.rand[inds.m52.after, z.obs])
+        #now do GLMs with mvabund
+        abundance = as.mvabund(obs.rand[,z.obs])
+        period = factor(obs.rand$period_num)
+        habitat = factor(obs.rand$habitat)
+        location = factor(obs.rand$location_num)
+        treatment = factor(obs.rand$treatment_num)
+        #PHL formula
+        formula = abundance ~  period + habitat  +location
+        #fit model with manyglm
+        fit.rand.PHL = manyglm(formula)
+        PHL.AIC= fit.rand.PHL$AICsum
+      #PHLT
+        formula = abundance ~  period + habitat  + location + treatment 
+        fit.rand.PHLT = manyglm(formula)
+        PHLT.AIC = fit.rand.PHLT$AICsum
+        sample_X_diff = sample_X_range[b]
+        sample_N_temp = sample_N_range[c]
+        df.tmp = data.frame(sample_X_diff, sample_N_temp, PHL.AIC, PHLT.AIC)
+        df = rbind(df, df.tmp)
+         }
+    }
+}
+#remove first row that was a placeholder so that rbind would work
+df = df[c(2:dim(df)[1]),]
+#determine for each run whether AIC for PHLT was less than for PHL
+df$treat_effect = df$PHLT.AIC<df$PHL.AIC
+sample_X_range_vec = NULL
+sample_N_range_vec = NULL
+#check that all poss. reductions had the same number of randomization runs
+rep_chk= NULL
+sig = NULL
+for (a in 1:length(sample_X_range)){
+  for (b in 1:length(sample_N_range)){
+    tmp = subset(df, sample_X_diff == sample_X_range[a] &
+                   sample_N_temp == sample_N_range[b])
+    sample_X_range_vec = c(sample_X_range_vec, tmp$sample_X_diff[1])
+    sample_N_range_vec = c(sample_N_range_vec, tmp$sample_N_temp[1])
+    rep_chk = c(rep_chk, dim(tmp)[1])
+    tmp.sig = subset(tmp, treat_effect==TRUE)
+    sig = c(sig, dim(tmp.sig)[1])
+  }
+}
+frac_sig = sig/rep_chk
+
+df.sum = data.frame(sample_N_range_vec,
+                  sample_X_range_vec, 
+                    sig, rep_chk, 
+                    frac_sig )
+
+print(df.sum)
+write.csv(df.sum, file = "power_prospective_bulk_post1.csv")
+print(proc.time() - ptm)
+
+```
+
+
