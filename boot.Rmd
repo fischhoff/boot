@@ -31,7 +31,8 @@ sample_time_of_interest = 2
 
 #read in order names
 #read in pooled data
-obs = read.csv(file = "Met52_NTE_bulk_samples.csv")
+obs = read.csv(file = "Met52_NTE_bulk_samples.csv")#get data from figshare
+#https://doi.org/10.6084/m9.figshare.4880693.v3
 #indices of columns with the abundance of each order (data need to be in wide format)
 z.obs = c(1:20)
 orders = names(obs)[z.obs]
