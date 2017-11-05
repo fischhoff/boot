@@ -1,5 +1,6 @@
 ---
 title: "Bootstrap power code for Before-After-Control-Impact experiments"
+#November 5, 2017
 output:
   html_document: default
   html_notebook: default
